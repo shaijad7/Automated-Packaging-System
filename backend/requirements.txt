@@ -1,0 +1,9 @@
+fastapi[standard]==0.115.6
+pydantic-settings==2.7.0
+PyJWT==2.10.1
+bcrypt==4.2.0
+pymongo==4.10.1
+certifi
+qrcode==7.4.2
+Pillow==10.4.0
+reportlab

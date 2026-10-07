@@ -1,0 +1,7 @@
+path: c:\Users\shaik\Downloads\ProjectWork\smart-inventory-system\cv_pipeline\dataset\train_ready
+train: c:\Users\shaik\Downloads\ProjectWork\smart-inventory-system\cv_pipeline\dataset\train_ready\train.txt
+val: c:\Users\shaik\Downloads\ProjectWork\smart-inventory-system\cv_pipeline\dataset\train_ready\val.txt
+
+# Classes
+names:
+  0: box
