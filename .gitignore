@@ -34,6 +34,7 @@ Thumbs.db
 *.pid
 *.sqlite
 *.db
+cv_pipeline/data/
 
 # YOLO / training generated outputs
 cv_pipeline/runs/
@@ -63,6 +64,7 @@ frontend/out/
 
 # Frontend local screenshots / browser test artifacts
 frontend/screenshots/
+frontend/screenshots.zip
 frontend/*.png
 frontend/take_screenshots.js
 frontend/test_dashboard_landing.js
@@ -76,36 +78,9 @@ cv_pipeline/dataset/production_additional/
 cv_pipeline/dataset/tmp_jpgs/
 cv_pipeline/dataset/train_ready/images/
 cv_pipeline/dataset/train_ready/labels/
-
-# Large dataset/video files
-cv_pipeline/dataset/*.mp4
-
-# Generated YOLO training output
-cv_pipeline/runs/
-
-# Local model download
-yolov8n.pt
-
-# Frontend generated/dependency files
-frontend/node_modules/
-frontend/.next/
-frontend/out/
-
-# Frontend local screenshots / browser test artifacts
-frontend/screenshots/
-frontend/*.png
-frontend/take_screenshots.js
-frontend/test_dashboard_landing.js
-frontend/test_eye_icon.js
-frontend/test_login_flow.js
-frontend/test_responsive.js
-
-# CV dataset source/raw media
-cv_pipeline/dataset/images/
-cv_pipeline/dataset/production_additional/
-cv_pipeline/dataset/tmp_jpgs/
-cv_pipeline/dataset/train_ready/images/
-cv_pipeline/dataset/train_ready/labels/
+cv_pipeline/dataset/train_ready/data.yaml
+cv_pipeline/dataset/train_ready/train.txt
+cv_pipeline/dataset/train_ready/val.txt
 
 # Large dataset/video files
 cv_pipeline/dataset/*.mp4
@@ -117,13 +92,6 @@ cv_pipeline/runs/
 !cv_pipeline/models/
 !cv_pipeline/models/best.pt
 
-cv_pipeline/dataset/train_ready/data.yaml
-cv_pipeline/dataset/train_ready/train.txt
-cv_pipeline/dataset/train_ready/val.txt
-
-cv_pipeline/dataset/train_ready/train.txt
-cv_pipeline/dataset/train_ready/val.txt
-
 # Local database/test utilities
 backend/create_test_users.py
 backend/verify_tst.py
@@ -132,11 +100,3 @@ backend/verify_tst.py
 cv_pipeline/debug_*.jpg
 cv_pipeline/diagnostic_log.txt
 cv_pipeline/sample_test.mp4
-
-# Training split files
-cv_pipeline/dataset/train_ready/train.txt
-cv_pipeline/dataset/train_ready/val.txt
-
-# Local database/test utilities
-backend/create_test_users.py
-backend/verify_tst.py

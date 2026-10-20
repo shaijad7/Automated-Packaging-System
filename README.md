@@ -271,168 +271,310 @@ The application supports selecting the configured camera source through environm
 
 ## Software Requirements
 
-Recommended environment:
+| Component | Verified Version | Notes |
+|---|---|---|
+| **Operating System** | Windows 10 / 11 (64-bit AMD64) | Tested on Windows 11 AMD64. |
+| **Python** | 3.10, 3.11, 3.12, 3.13 (64-bit) | Verified on Python 3.13.7 (64-bit). Prebuilt binary wheels used; **no C/C++ compiler or MSVC required**. |
+| **Node.js** | 20.x or 22.x LTS | Verified on Node.js v22.17.1. |
+| **npm** | 10.x | Verified on npm 10.9.2. |
+| **Database** | MongoDB Atlas or local MongoDB | PyMongo Async client with TLS support. |
+| **Git** | 2.x | Standard Git client. |
 
-- Windows
-- Python 3.x
-- Node.js
-- npm
-- MongoDB Atlas account
-- Git
+---
 
-Python dependencies are listed in:
+## Configuration & Environment Variables
 
-```text
-backend/requirements.txt
-cv_pipeline/requirements.txt
+The repository includes template files for each component:
+- `backend/.env.example`
+- `cv_pipeline/.env.example`
+- `frontend/.env.example`
+
+### 1. Backend (`backend/.env`)
+
+Copy `backend/.env.example` to `backend/.env`:
+
+```ini
+# Database Configuration
+MONGODB_URI=mongodb+srv://<username>:<password>@cluster.mongodb.net/?retryWrites=true&w=majority
+MONGODB_DB_NAME=smart_inventory
+
+# Security Configuration
+JWT_SECRET_KEY=generate_a_long_random_secret_key_here
+EDGE_NODE_API_KEY=your_shared_edge_node_api_key_12345
+
+# CORS Configuration (Frontend origin)
+API_CORS_ORIGINS=http://localhost:3000
+
+# Alert Thresholds
+ALERT_EXCEPTION_THRESHOLD=5
+ALERT_EXCEPTION_WINDOW_MINUTES=10
 ```
 
-Frontend dependencies are defined in:
+> **IMPORTANT**: `EDGE_NODE_API_KEY` is a dedicated machine-to-machine key used by the computer-vision edge node. It is **not** a user JWT token.
 
-```text
-frontend/package.json
+### 2. Computer Vision Pipeline (`cv_pipeline/.env`)
+
+Copy `cv_pipeline/.env.example` to `cv_pipeline/.env`:
+
+```ini
+# Edge Node Identity (MUST exactly match EDGE_NODE_API_KEY in backend/.env)
+EDGE_NODE_API_KEY=your_shared_edge_node_api_key_12345
+
+# Backend API URL
+BACKEND_API_URL=http://localhost:8000
+
+# Camera Source: 0 is usually integrated camera, 1 is usually first external USB webcam
+CAMERA_SOURCE=0
+CAMERA_WIDTH=1280
+CAMERA_HEIGHT=720
+CAMERA_FPS=30
+
+# YOLO Model Configuration (Path relative to cv_pipeline/ or repo root)
+YOLO_MODEL_PATH=models/best.pt
+YOLO_CONFIDENCE_THRESHOLD=0.5
+TARGET_CLASS_NAME=box
+
+# Counting Line Configuration (adjust for conveyor/feed geometry)
+LINE_START_X=0
+LINE_START_Y=400
+LINE_END_X=1280
+LINE_END_Y=400
+
+# Event Spool Configuration (defaults to data/event_spool.db, max 10000 events)
+EVENT_SPOOL_PATH=data/event_spool.db
+EVENT_SPOOL_MAX_SIZE=10000
 ```
 
-## Configuration
+### 3. Frontend (`frontend/.env.local`)
 
-The repository contains example environment files:
+Create `frontend/.env.local` (optional, defaults to `http://localhost:8000/api`):
 
-```text
-backend/.env.example
-cv_pipeline/.env.example
+```ini
+NEXT_PUBLIC_API_URL=http://localhost:8000/api
 ```
 
-Create local `.env` files from these examples.
+---
 
-### Backend
+## Installation Guide (Windows)
 
-The backend requires configuration for:
+All commands are shown for both **PowerShell** and **Command Prompt (`cmd.exe`)**. Works across VS Code Terminal, Windows Terminal, and IDE integrated terminals.
 
-- MongoDB Atlas connection
-- JWT secret/configuration
-- API settings
-- Alert threshold/window
+### Step 1: Clone the Repository
 
-### Computer Vision
-
-The CV pipeline requires configuration for:
-
-- Camera source
-- YOLO model path
-- Detection confidence
-- Camera resolution/FPS request
-- Counting line configuration
-- Backend event API configuration
-
-**Do not commit `.env` files or real credentials to GitHub.**
-
-## Installation
-
-### 1. Clone the repository
-
-```bash
+```powershell
 git clone https://github.com/shaijad7/Automated-Packaging-System.git
 cd Automated-Packaging-System
 ```
 
-### 2. Backend setup
+---
 
-```bash
+### Step 2: Backend Setup
+
+#### Using PowerShell:
+```powershell
 cd backend
 python -m venv venv
-venv\Scripts\activate
+.\venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
 pip install -r requirements.txt
+cp .env.example .env
+# Edit .env with your MongoDB Atlas URI and secrets
 ```
 
-Create:
-
-```text
-backend/.env
+#### Using Command Prompt (`cmd.exe`):
+```cmd
+cd backend
+python -m venv venv
+venv\Scripts\activate.bat
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+copy .env.example .env
 ```
 
-using:
+---
 
-```text
-backend/.env.example
-```
+### Step 3: Computer Vision Pipeline Setup
 
-Configure the MongoDB Atlas connection and required secrets.
+Open a second terminal window.
 
-### 3. Computer vision setup
-
-From the project root:
-
-```bash
+#### Using PowerShell:
+```powershell
 cd cv_pipeline
 python -m venv venv
-venv\Scripts\activate
+.\venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
 pip install -r requirements.txt
+cp .env.example .env
+# Verify that EDGE_NODE_API_KEY in cv_pipeline/.env matches backend/.env
 ```
 
-Create:
-
-```text
-cv_pipeline/.env
+#### Using Command Prompt (`cmd.exe`):
+```cmd
+cd cv_pipeline
+python -m venv venv
+venv\Scripts\activate.bat
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+copy .env.example .env
 ```
 
-using:
+> **Note on Prebuilt Wheels**: `cv_pipeline/requirements.txt` specifies `ultralytics>=8.3.40` and `lap>=0.5.12`, which install 100% prebuilt binary wheels for Python 3.13 Windows 64-bit (`numpy-2.5.4`, `lap-0.5.13`, `opencv-python-5.0.0.93`, `torch-2.14.1`). No local C compiler or build tools are needed.
 
-```text
-cv_pipeline/.env.example
-```
+---
 
-The trained model is included at:
+### Step 4: Frontend Setup
 
-```text
-cv_pipeline/models/best.pt
-```
+Open a third terminal window.
 
-### 4. Frontend setup
-
-Open another terminal:
-
-```bash
+```powershell
 cd frontend
 npm install
 ```
 
+> **CRITICAL WARNING**: **Never run `npm audit fix --force`**. This command attempts to downgrade `eslint-config-next` to version 14.2.35, which breaks Next.js 16 flat-config exports and crashes both ESLint and `next build`.
+
+---
+
 ## Running the Application
 
-### Start the backend
+### 1. Start the Backend API
 
-From `backend`:
+From `backend` directory with `venv` activated:
 
-```bash
-uvicorn app.main:app --reload
+```powershell
+uvicorn app.main:app --reload --port 8000
 ```
+- API Base URL: `http://localhost:8000`
+- Interactive Swagger API Docs: `http://localhost:8000/docs`
+- Health Check: `http://localhost:8000/api/health`
 
-### Start the frontend
+### 2. Start the Frontend Dashboard
 
-From `frontend`:
+From `frontend` directory:
 
-```bash
+```powershell
 npm run dev
 ```
+- Open `http://localhost:3000` in your browser.
+- Production build alternative:
+  ```powershell
+  npm run build
+  npm start
+  ```
 
-Open the local Next.js application in a browser.
+### 3. Run Camera Discovery (Optional)
 
-### Start the computer-vision pipeline
+Before starting the CV pipeline, you can discover all connected camera devices and their supported backends:
 
-From `cv_pipeline`:
+From `cv_pipeline` directory with `venv` activated:
+```powershell
+python discover_cameras.py
+```
+Note the detected index (e.g., `0` for integrated webcam, `1` for external USB camera) and update `CAMERA_SOURCE` in `cv_pipeline/.env`.
 
-```bash
+### 4. Start the Computer Vision Pipeline
+
+From `cv_pipeline` directory with `venv` activated:
+
+```powershell
 python run_pipeline.py
 ```
 
-The CV application opens the native AI processing window and uses the configured camera.
+- Opens the OpenCV real-time visual feed with tracking boxes, centroid tracks, counting line, and QR status overlay.
+- Transmits line-crossing events to `http://localhost:8000/api/events/` via background worker.
+- Press `q` or `Ctrl+C` in the terminal to stop gracefully.
 
-Press:
+---
 
-```text
-q
+## Running Tests
+
+All tests are verified and can be executed independently.
+
+### Backend Tests (100% Database Isolated)
+
+> **Database Safety Guarantee**: All test scripts run against dedicated temporary test databases (`smart_inventory_test_*`) and drop them immediately upon completion. Real inventory records, production events, and real administrator credentials are never modified, overwritten, or deleted.
+
+From `backend` directory with `venv` activated:
+
+```powershell
+# Authentication, JWT, and RBAC tests
+python test_auth_logic.py
+
+# Inventory counting and duplicate event idempotency tests
+python test_phase10b_backend.py
+
+# Ambiguous QR status and API key security tests
+python test_ambiguous_backend.py
+
+# Product registration, duplicate SKU, and label PNG tests
+python test_registration.py
+
+# Alert threshold, state transitions, and deduplication tests
+python test_phase14a_final.py
 ```
 
-to exit the processing window.
+### Computer Vision Tests (69 Unit Tests)
+
+From project root or `cv_pipeline` directory with `venv` activated:
+
+```powershell
+pytest cv_pipeline/tests/ -v
+```
+
+Tests cover:
+- `test_api_client.py`: `X-API-Key` headers, event submission, production worker acknowledgement validation, retry logic, 401 response handling.
+- `test_association.py`: Spatial IoU bounding box association, multi-box deduplication.
+- `test_counting_independence.py`: Counting line independence from QR success, double-count prevention.
+- `test_event_spool.py`: Durable SQLite WAL event spooling, restart recovery, retry backoff, bounded 401 handling, capacity limits, idempotent duplicate acknowledgement.
+- `test_model_and_camera.py`: Missing model honesty, class 0 (`box`) verification, camera disconnect handling.
+- `test_payload_validator.py`: `INV|<SKU>` syntax validation, corrupted prefix/separator rejection.
+- `test_qr_detector.py`: Native OpenCV QR detector, crop ROI offsets, duplicate suppression.
+- `test_smoother.py`: Multi-frame QR payload smoothing, expiration, reappearing track reset.
+
+### Frontend Quality Checks
+
+From `frontend` directory:
+
+```powershell
+# Lint check (0 errors)
+npm run lint
+
+# TypeScript verification and production build
+npm run build
+```
+
+---
+
+## Troubleshooting Guide
+
+### 1. `numpy` build failure during `pip install` on Python 3.13
+- **Cause**: Older packages pinned `numpy<2.0.0`, for which no prebuilt wheels exist on Python 3.13 Windows. Pip attempts to build NumPy from source using local MinGW/GCC and fails.
+- **Fix**: Use our updated `cv_pipeline/requirements.txt` with `ultralytics>=8.3.40`, which allows `numpy>=2.1.0` prebuilt binary wheels.
+
+### 2. `ModuleNotFoundError: No module named 'lap'` during CV tracking
+- **Cause**: ByteTrack tracker requires `lap` (Linear Assignment Problem solver).
+- **Fix**: Install `lap>=0.5.12`. Prebuilt wheels (`lap-0.5.13-cp313-win_amd64.whl`) are now included in `cv_pipeline/requirements.txt`.
+
+### 3. HTTP 401 Unauthorized when CV submits events to `POST /api/events/`
+- **Cause**: `EDGE_NODE_API_KEY` in `cv_pipeline/.env` does not match `EDGE_NODE_API_KEY` in `backend/.env`.
+- **Fix**: Ensure both files have identical values for `EDGE_NODE_API_KEY`. The CV client transmits this key via the `X-API-Key` HTTP header.
+
+### 4. Next.js ESLint crash: `Cannot find module 'eslint-config-next'` or flat config errors
+- **Cause**: Running `npm audit fix --force` forcibly downgrades `eslint-config-next` to version 14.
+- **Fix**: Keep `eslint-config-next` at `16.3.8` (matching `next@16.3.8`). Do not use `--force`. The 5 high vulnerabilities reported by `npm audit` are strictly development dependencies of ESLint and do not affect the production app.
+
+### 5. Camera fails to open on Windows (`cv2.VideoCapture` returns `False`)
+- **Cause**: Incorrect `CAMERA_SOURCE` index, camera in use by another application (Zoom, Teams, Camera app), or Windows Privacy permissions blocking desktop camera access.
+- **Fix**:
+  1. Run `python discover_cameras.py` to identify the correct device index.
+  2. Close any apps using the camera.
+  3. Ensure **Settings > Privacy & security > Camera > Let desktop apps access your camera** is enabled.
+  4. The pipeline uses `cv2.CAP_DSHOW` (DirectShow) backend on Windows for reliable low-latency capture.
+
+### 6. Missing model file
+- **Behavior**: If `models/best.pt` is missing, `YoloDetector` honestly logs `[Detector] Model unavailable: File 'models/best.pt' not found on disk.` and safely yields empty detections without crashing or fabricating bounding boxes.
+- **Resolution**: Verify that `cv_pipeline/models/best.pt` (6.24 MB) is present in the repository.
+
 
 ## Product and QR Workflow
 
@@ -504,6 +646,10 @@ VALID_QR
 ```
 
 A QR exception does not automatically mean that the physical box was not counted.
+
+### Durable Event Spooling & Recovery
+
+Outbound inventory line-crossing events are durably persisted to an on-disk SQLite database (`outbound_spool` table with Write-Ahead Logging) before attempting network transmission to the backend. If network connectivity drops, the process crashes, or power is interrupted, unacknowledged events remain safely spooled on disk and are automatically recovered and transmitted in chronological order upon pipeline restart. For complete architecture, durability guarantees, maintenance commands, and safe spool-clearing procedures, see [docs/EVENT_SPOOLING.md](docs/EVENT_SPOOLING.md).
 
 ## QR Status Definitions
 
