@@ -12,21 +12,58 @@ from camera import CameraManager
 from config import settings
 from counting.line_counter import LineCounter
 from qr.qr_detector import NativeQRDetector
-from qr.association import validate_qrs, ValidationState
+from qr.association import validate_qrs, ValidationState, QRSmoother
 
 import os
 os.environ["YOLO_VERBOSE"] = "False"
 os.environ["YOLO_OFFLINE"] = "True"
 from detector import YoloDetector
 
+from pathlib import Path
+from spool import EventSpool
+
 # Global flag for graceful shutdown
 running = True
 event_queue = queue.Queue(maxsize=1000)
+preserved_events = []
+MAX_AUTH_RETRIES = 3
+
+_CV_DIR = Path(__file__).resolve().parent
+_spool_db = _CV_DIR / settings.EVENT_SPOOL_PATH if not Path(settings.EVENT_SPOOL_PATH).is_absolute() else Path(settings.EVENT_SPOOL_PATH)
+spool = EventSpool(_spool_db, max_events=settings.EVENT_SPOOL_MAX_SIZE)
 
 def signal_handler(sig, frame):
     global running
     print("\n[Main] Shutdown signal received (Ctrl+C). Terminating gracefully...")
     running = False
+
+def validate_acknowledgement(response):
+    """Validate backend HTTP response and JSON acknowledgement body.
+
+    Requires a successful HTTP status and a JSON object whose 'msg' field is
+    exactly 'Event recorded' or 'Event already processed'.
+    Raises requests.exceptions.RequestException on invalid status or body.
+    """
+    response.raise_for_status()
+    try:
+        resp_json = response.json()
+    except Exception as json_err:
+        raise requests.exceptions.RequestException(
+            f"Invalid JSON in backend response: {json_err}",
+            response=response
+        ) from json_err
+
+    if not isinstance(resp_json, dict) or resp_json.get("msg") not in (
+        "Event recorded",
+        "Event already processed",
+    ):
+        msg_preview = str(resp_json)[:100] if isinstance(resp_json, dict) else type(resp_json).__name__
+        raise requests.exceptions.RequestException(
+            f"Unexpected acknowledgement body from backend: {msg_preview}",
+            response=response
+        )
+    return resp_json
+
 
 def event_worker():
     while running:
@@ -36,21 +73,79 @@ def event_worker():
             continue
             
         success = False
-        while running and not success:
-            try:
-                headers = {"X-API-Key": settings.EDGE_NODE_API_KEY}
-                response = requests.post(f"{settings.BACKEND_API_URL}/api/events/", json=event_payload, headers=headers, timeout=5.0)
-                response.raise_for_status()
-                success = True
-                print(f"[Worker] Event {event_payload['event_id']} sent successfully.")
-            except Exception as e:
-                print(f"[Worker] HTTP Error sending event {event_payload['event_id']}: {e}. Retrying in 2s...")
-                time.sleep(2.0)
-        event_queue.task_done()
+        consecutive_auth_errors = 0
+        try:
+            while running and not success:
+                try:
+                    headers = {"X-API-Key": settings.EDGE_NODE_API_KEY}
+                    response = requests.post(f"{settings.BACKEND_API_URL}/api/events/", json=event_payload, headers=headers, timeout=5.0)
+                    if response.status_code == 401:
+                        consecutive_auth_errors += 1
+                        if "event_id" in event_payload:
+                            spool.record_attempt(event_payload["event_id"], status="AUTH_FAILED", error="HTTP 401 Unauthorized")
+                        print(f"[Worker] HTTP 401 Unauthorized: Backend rejected EDGE_NODE_API_KEY (Attempt {consecutive_auth_errors}/{MAX_AUTH_RETRIES}). Verify .env.")
+                        if consecutive_auth_errors >= MAX_AUTH_RETRIES:
+                            print(f"[Worker] Max auth retries reached for event {event_payload.get('event_id')}. Preserving event in persistent spool.")
+                            preserved_events.append(event_payload)
+                            break
+                        for _ in range(15):
+                            if not running:
+                                break
+                            time.sleep(0.2)
+                        continue
+                    validate_acknowledgement(response)
+                    # Event was safely recorded or duplicate recognized by backend
+                    if "event_id" in event_payload:
+                        spool.mark_delivered(event_payload["event_id"])
+                    success = True
+                    consecutive_auth_errors = 0
+                    print(f"[Worker] Event {event_payload.get('event_id')} sent successfully.")
+                except requests.exceptions.RequestException as e:
+                    status_code = getattr(getattr(e, 'response', None), 'status_code', None)
+                    if status_code == 401:
+                        consecutive_auth_errors += 1
+                        if "event_id" in event_payload:
+                            spool.record_attempt(event_payload["event_id"], status="AUTH_FAILED", error="HTTP 401 Unauthorized")
+                        print(f"[Worker] HTTP 401 Unauthorized: Backend rejected key (Attempt {consecutive_auth_errors}/{MAX_AUTH_RETRIES}).")
+                        if consecutive_auth_errors >= MAX_AUTH_RETRIES:
+                            preserved_events.append(event_payload)
+                            break
+                    else:
+                        if "event_id" in event_payload:
+                            spool.record_attempt(event_payload["event_id"], status="PENDING", error=str(e))
+                        print(f"[Worker] Network/HTTP Error sending event {event_payload.get('event_id')}: {e}. Retrying in 2s...")
+                    for _ in range(10):
+                        if not running:
+                            break
+                        time.sleep(0.2)
+                except Exception as e:
+                    if "event_id" in event_payload:
+                        spool.record_attempt(event_payload["event_id"], status="PENDING", error=str(e))
+                    print(f"[Worker] Error sending event {event_payload.get('event_id')}: {e}. Retrying in 2s...")
+                    for _ in range(10):
+                        if not running:
+                            break
+                        time.sleep(0.2)
+            if not success and event_payload not in preserved_events:
+                preserved_events.append(event_payload)
+        finally:
+            event_queue.task_done()
+
 
 def main():
     global running
     
+    # Recover unacknowledged pending events from durable spool on startup
+    pending_events = spool.get_pending_events()
+    if pending_events:
+        print(f"[Main] Recovering {len(pending_events)} pending events from durable spool on startup.")
+        for pe in pending_events:
+            try:
+                event_queue.put_nowait(pe)
+            except queue.Full:
+                print("[Main] Event queue full during recovery; remaining events stay in spool.")
+                break
+
     # Start background worker for HTTP requests
     worker_thread = threading.Thread(target=event_worker, daemon=True)
     worker_thread.start()
@@ -71,6 +166,9 @@ def main():
     print("[Main] Initializing QR Detector...")
     qr_detector = NativeQRDetector()
     
+    print("[Main] Initializing QR Smoother...")
+    qr_smoother = QRSmoother(history_size=15, confirmation_thresh=3, drop_thresh=10)
+
     print("[Main] Initializing Camera Manager...")
     cam_manager = CameraManager()
     cam_manager.start()
@@ -99,14 +197,11 @@ def main():
             # Process QR Detection
             detected_qrs = qr_detector.detect(frame, bounding_boxes=active_tracks)
             validation_result = validate_qrs(active_tracks, detected_qrs)
-            track_states = validation_result["track_states"]
+            raw_track_states = validation_result["raw_track_states"]
             
-            # Phase 10B: Basic format validation (let backend verify if product is active/real)
-            for t_id, state in track_states.items():
-                if state.get("status") == ValidationState.INVALID_QR:
-                    payload = state.get("payload")
-                    if payload and payload.startswith("INV|"):
-                        state["status"] = ValidationState.VALID_QR
+            # Apply Temporal Smoothing
+            track_states = qr_smoother.update(active_tracks, raw_track_states)
+
             
             # Draw Counting Line
             cv2.line(annotated_frame, 
@@ -162,10 +257,13 @@ def main():
                 }
                 
                 try:
+                    spool.enqueue(event_payload)
                     event_queue.put_nowait(event_payload)
-                    print(f"  -> [Phase 10B] Queued event_id: {event_id}")
+                    print(f"  -> [Spool] Persisted and queued event_id: {event_id}")
                 except queue.Full:
-                    print(f"[Warning] Event Queue FULL. Dropping event: {event_id}")
+                    print(f"[Warning] Event Queue FULL. Event {event_id} remains preserved in persistent spool.")
+                except Exception as e:
+                    print(f"[Error] Critical persistence failure for event {event_id}: {e}")
             
             # Overlay Inference FPS if available
             if detector.is_available:
@@ -195,6 +293,7 @@ def main():
             cv2.destroyAllWindows()
         except cv2.error:
             pass
+        spool.close()
         print("[Main] Shutdown complete. Resources released.")
 
 if __name__ == "__main__":

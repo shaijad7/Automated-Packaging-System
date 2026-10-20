@@ -1,3 +1,4 @@
+from pathlib import Path
 import os
 import time
 import cv2
@@ -8,7 +9,13 @@ class YoloDetector:
         self.conf_threshold = conf_threshold
         self.model = None
 
-        if not os.path.exists(model_path):
+        target_path = Path(model_path)
+        if not target_path.is_absolute() and not target_path.exists():
+            fallback = Path(__file__).resolve().parent / model_path
+            if fallback.exists():
+                target_path = fallback
+
+        if not target_path.exists():
             print(f"[Detector] Model unavailable: File '{model_path}' not found on disk.")
             return
             
@@ -23,9 +30,9 @@ class YoloDetector:
             import torch
             from ultralytics import YOLO
             torch.set_num_threads(1)
-            self.model = YOLO(model_path)
+            self.model = YOLO(str(target_path))
             self.is_available = True
-            print(f"[Detector] Model loaded successfully from {model_path}.")
+            print(f"[Detector] Model loaded successfully from {target_path}.")
         except Exception as e:
             print(f"[Detector] Model unavailable: Failed to load '{model_path}': {e}")
 
