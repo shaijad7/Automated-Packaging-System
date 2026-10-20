@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from app.models.user import TokenData
-from app.api.deps import get_current_user
+from app.api.deps import get_current_active_admin
 from app.db.mongodb import get_db
 import pymongo
 from typing import List, Dict, Any, Optional
@@ -17,7 +17,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 router = APIRouter()
 
 @router.get("/summary")
-async def get_summary(current_user: TokenData = Depends(get_current_user)):
+async def get_summary(current_user: TokenData = Depends(get_current_active_admin)):
     db = get_db()
     
     pipeline = [
@@ -33,8 +33,9 @@ async def get_summary(current_user: TokenData = Depends(get_current_user)):
     no_qr = counts.get("NO_QR", 0)
     unreadable_qr = counts.get("UNREADABLE_QR", 0)
     invalid_qr = counts.get("INVALID_QR", 0)
+    ambiguous = counts.get("AMBIGUOUS", 0)
     
-    qr_exceptions = no_qr + unreadable_qr + invalid_qr
+    qr_exceptions = no_qr + unreadable_qr + invalid_qr + ambiguous
     overall_boxes = valid_qr + qr_exceptions
     
     success_count = await db["events"].count_documents({"status": "SUCCESS"})
@@ -45,12 +46,13 @@ async def get_summary(current_user: TokenData = Depends(get_current_user)):
         "no_qr": no_qr,
         "unreadable_qr": unreadable_qr,
         "invalid_qr": invalid_qr,
+        "ambiguous": ambiguous,
         "qr_exceptions": qr_exceptions,
         "inventory_added": success_count
     }
 
 @router.get("/inventory")
-async def get_inventory(current_user: TokenData = Depends(get_current_user)):
+async def get_inventory(current_user: TokenData = Depends(get_current_active_admin)):
     db = get_db()
     
     pipeline = [
@@ -83,14 +85,14 @@ async def get_inventory(current_user: TokenData = Depends(get_current_user)):
     return inventory
 
 @router.get("/events")
-async def get_events(limit: int = 50, current_user: TokenData = Depends(get_current_user)):
+async def get_events(limit: int = 50, current_user: TokenData = Depends(get_current_active_admin)):
     db = get_db()
     
     events = await db["events"].find({}, {"_id": 0}).sort("timestamp", pymongo.DESCENDING).limit(limit).to_list(length=limit)
     return events
 
 @router.get("/analytics")
-async def get_analytics(range: str = "all", current_user: TokenData = Depends(get_current_user)):
+async def get_analytics(range: str = "all", current_user: TokenData = Depends(get_current_active_admin)):
     if range not in ["24h", "7d", "30d", "all"]:
         raise HTTPException(status_code=400, detail="Invalid range")
 
@@ -121,7 +123,7 @@ async def get_analytics(range: str = "all", current_user: TokenData = Depends(ge
             "_id": {"$dateToString": {"format": date_format, "date": "$timestamp"}},
             "overall_boxes": {"$sum": 1},
             "valid_qr": {"$sum": {"$cond": [{"$eq": ["$qr_status", "VALID_QR"]}, 1, 0]}},
-            "exceptions": {"$sum": {"$cond": [{"$in": ["$qr_status", ["NO_QR", "UNREADABLE_QR", "INVALID_QR"]]}, 1, 0]}}
+            "exceptions": {"$sum": {"$cond": [{"$in": ["$qr_status", ["NO_QR", "UNREADABLE_QR", "INVALID_QR", "AMBIGUOUS"]]}, 1, 0]}}
         }},
         {"$sort": {"_id": 1}}
     ]
@@ -153,7 +155,8 @@ async def get_analytics(range: str = "all", current_user: TokenData = Depends(ge
         {"name": "VALID_QR", "value": distribution.get("VALID_QR", 0)},
         {"name": "NO_QR", "value": distribution.get("NO_QR", 0)},
         {"name": "UNREADABLE_QR", "value": distribution.get("UNREADABLE_QR", 0)},
-        {"name": "INVALID_QR", "value": distribution.get("INVALID_QR", 0)}
+        {"name": "INVALID_QR", "value": distribution.get("INVALID_QR", 0)},
+        {"name": "AMBIGUOUS", "value": distribution.get("AMBIGUOUS", 0)}
     ]
     # Filter out categories with 0 data
     formatted_distribution = [d for d in formatted_distribution if d["value"] > 0]
@@ -201,7 +204,7 @@ async def get_reports(
     end_date: Optional[str] = None, 
     qr_status: Optional[str] = None, 
     sku: Optional[str] = None,
-    current_user: TokenData = Depends(get_current_user)
+    current_user: TokenData = Depends(get_current_active_admin)
 ):
     db = get_db()
     query = build_report_query(start_date, end_date, qr_status, sku)
@@ -222,6 +225,7 @@ async def get_reports(
     no_qr = 0
     unreadable_qr = 0
     invalid_qr = 0
+    ambiguous = 0
     inventory_added = 0
     
     for doc in counts:
@@ -236,8 +240,10 @@ async def get_reports(
             unreadable_qr += count
         elif status == "INVALID_QR":
             invalid_qr += count
+        elif status == "AMBIGUOUS":
+            ambiguous += count
             
-    qr_exceptions = no_qr + unreadable_qr + invalid_qr
+    qr_exceptions = no_qr + unreadable_qr + invalid_qr + ambiguous
     overall_boxes = valid_qr + qr_exceptions
     
     summary = {
@@ -246,6 +252,7 @@ async def get_reports(
         "no_qr": no_qr,
         "unreadable_qr": unreadable_qr,
         "invalid_qr": invalid_qr,
+        "ambiguous": ambiguous,
         "qr_exceptions": qr_exceptions,
         "inventory_added": inventory_added
     }
@@ -264,7 +271,7 @@ async def export_reports_csv(
     end_date: Optional[str] = None, 
     qr_status: Optional[str] = None, 
     sku: Optional[str] = None,
-    current_user: TokenData = Depends(get_current_user)
+    current_user: TokenData = Depends(get_current_active_admin)
 ):
     db = get_db()
     query = build_report_query(start_date, end_date, qr_status, sku)
@@ -301,7 +308,7 @@ async def export_reports_pdf(
     end_date: Optional[str] = None, 
     qr_status: Optional[str] = None, 
     sku: Optional[str] = None,
-    current_user: TokenData = Depends(get_current_user)
+    current_user: TokenData = Depends(get_current_active_admin)
 ):
     db = get_db()
     query = build_report_query(start_date, end_date, qr_status, sku)
@@ -322,6 +329,7 @@ async def export_reports_pdf(
     no_qr = 0
     unreadable_qr = 0
     invalid_qr = 0
+    ambiguous = 0
     inventory_added = 0
     
     for doc in counts:
@@ -336,8 +344,10 @@ async def export_reports_pdf(
             unreadable_qr += count
         elif status == "INVALID_QR":
             invalid_qr += count
+        elif status == "AMBIGUOUS":
+            ambiguous += count
             
-    qr_exceptions = no_qr + unreadable_qr + invalid_qr
+    qr_exceptions = no_qr + unreadable_qr + invalid_qr + ambiguous
     overall_boxes = valid_qr + qr_exceptions
     
     events = await db["events"].find(query, {"_id": 0}).sort("timestamp", pymongo.DESCENDING).limit(10000).to_list(length=10000)

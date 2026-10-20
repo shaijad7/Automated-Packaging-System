@@ -11,6 +11,7 @@ class AlertBase(BaseModel):
     no_qr_count: int
     unreadable_qr_count: int
     invalid_qr_count: int
+    ambiguous_qr_count: int = 0
     window_start: datetime
     window_end: datetime
     created_at: datetime

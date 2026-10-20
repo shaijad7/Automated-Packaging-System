@@ -18,7 +18,7 @@ async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]) -> Tok
         payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=["HS256"])
         username: str | None = payload.get("sub")
         role: str | None = payload.get("role")
-        if username is None or role is None or role != "ADMIN":
+        if username is None or role is None:
             raise credentials_exception
         token_data = TokenData(username=username, role=role)
     except InvalidTokenError:
@@ -26,7 +26,13 @@ async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]) -> Tok
     return token_data
 
 def get_current_active_admin(current_user: Annotated[TokenData, Depends(get_current_user)]) -> TokenData:
+    if current_user.role != "ADMIN":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="The user doesn't have enough privileges",
+        )
     return current_user
+
 
 from fastapi.security import APIKeyHeader
 import hmac

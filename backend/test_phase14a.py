@@ -10,7 +10,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 sys.path.append(".")
 from app.main import app
-from app.db.mongodb import db, init_indexes
+from app.db.mongodb import db, init_indexes, validate_test_db_name, safe_drop_test_database
 from app.core.config import settings
 from pymongo import AsyncMongoClient
 from app.services.alerts import evaluate_qr_exception_alert
@@ -20,14 +20,13 @@ async def get_token(client, username="testadmin", password="testpass"):
     return response.json()["access_token"]
 
 async def run_tests():
-    # Setup DB
+    # Setup isolated DB
+    test_db_name = validate_test_db_name("smart_inventory_test_phase14")
+    settings.MONGODB_DB_NAME = test_db_name
     db.client = AsyncMongoClient(settings.MONGODB_URI, tlsCAFile=certifi.where())
+    database = db.client.get_database(test_db_name)
+    await safe_drop_test_database(db.client, test_db_name)
     await init_indexes()
-    database = db.client.get_database("smart_inventory")
-    
-    # Cleanup old test events and alerts
-    await database["events"].delete_many({"track_id": {"$lt": 0}})
-    await database["alerts"].delete_many({"alert_type": "QR_EXCEPTION_SPIKE"})
     
     # create a test admin user
     from app.core.security import get_password_hash
@@ -204,12 +203,9 @@ async def run_tests():
         print("PASS: VIEWER rejected (test removed in 14C)")
 
     finally:
-        # Final Cleanup
-        await database["events"].delete_many({"track_id": {"$lt": 0}})
-        await database["alerts"].delete_many({"alert_type": "QR_EXCEPTION_SPIKE"})
-        await database["users"].delete_many({"username": {"$in": ["testadmin"]}})
-        
+        # Final Cleanup - drop test database
         if db.client:
+            await safe_drop_test_database(db.client, test_db_name)
             await db.client.close()
             
     print("All Phase 14a tests passed!")

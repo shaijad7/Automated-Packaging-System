@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 from app.models.event import EventCreate, EventInDB
 from app.models.user import TokenData
-from app.api.deps import get_current_user, verify_api_key
+from app.api.deps import get_current_active_admin, verify_api_key
 from app.db.mongodb import get_db
 from pymongo.errors import DuplicateKeyError
 import pymongo
@@ -11,7 +11,7 @@ from app.services.alerts import evaluate_qr_exception_alert
 router = APIRouter()
 
 @router.get("/", response_model=list[EventInDB])
-async def list_events(limit: int = 50, current_user: TokenData = Depends(get_current_user)):
+async def list_events(limit: int = 50, current_user: TokenData = Depends(get_current_active_admin)):
     db = get_db()
     events = await db["events"].find().sort("timestamp", pymongo.DESCENDING).limit(limit).to_list(limit)
     return [EventInDB(**e) for e in events]

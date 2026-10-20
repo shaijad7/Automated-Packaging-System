@@ -6,13 +6,13 @@ from PIL import Image, ImageDraw, ImageFont
 
 from app.models.product import ProductCreate, ProductInDB
 from app.models.user import TokenData
-from app.api.deps import get_current_user, get_current_active_admin
+from app.api.deps import get_current_active_admin
 from app.db.mongodb import get_db
 
 router = APIRouter()
 
 @router.get("/", response_model=list[ProductInDB])
-async def list_products(current_user: TokenData = Depends(get_current_user)):
+async def list_products(current_user: TokenData = Depends(get_current_active_admin)):
     db = get_db()
     products = await db["products"].find().to_list(1000)
     return [ProductInDB(**p) for p in products]
@@ -52,7 +52,7 @@ async def delete_product(sku: str, current_user: TokenData = Depends(get_current
     return None
 
 @router.get("/{sku}/label")
-async def generate_label(sku: str, current_user: TokenData = Depends(get_current_user)):
+async def generate_label(sku: str, current_user: TokenData = Depends(get_current_active_admin)):
     db = get_db()
     product = await db["products"].find_one({"sku": sku})
     if not product:

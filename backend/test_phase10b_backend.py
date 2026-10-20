@@ -13,19 +13,23 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 sys.path.append(".")
 from app.main import app
-from app.db.mongodb import db, init_indexes
+from app.db.mongodb import db, init_indexes, validate_test_db_name, safe_drop_test_database
 from app.core.config import settings
 
 client = TestClient(app)
 headers = {"X-API-Key": settings.EDGE_NODE_API_KEY}
 
+TEST_DB_NAME = validate_test_db_name("smart_inventory_test_phase10b")
+settings.MONGODB_DB_NAME = TEST_DB_NAME
+
 async def run_tests():
     # Setup DB
     db.client = AsyncMongoClient(settings.MONGODB_URI, tlsCAFile=certifi.where())
+    database = db.client.get_database(TEST_DB_NAME)
+    await safe_drop_test_database(db.client, TEST_DB_NAME)
     await init_indexes()
-    database = db.client.get_database("smart_inventory")
     
-    # Make sure ADP-001 exists
+    # Make sure ADP-001 exists in test database
     await database["products"].update_one(
         {"sku": "ADP-001"},
         {"$set": {"name": "Adapter", "qr_code": "INV|ADP-001", "is_active": True}},
@@ -114,6 +118,7 @@ async def run_tests():
     # or just mocking the database call inside the route.
     
     if db.client:
+        await safe_drop_test_database(db.client, TEST_DB_NAME)
         await db.client.close()
     
     print("All basic Backend tests passed!")

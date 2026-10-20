@@ -6,11 +6,15 @@ import asyncio
 
 sys.path.append(".")
 from app.main import app
-from app.db.mongodb import get_db, db
+from app.db.mongodb import get_db, db, validate_test_db_name, safe_drop_test_database
 from app.core.security import get_password_hash
+from app.core.config import settings
 
 client = TestClient(app)
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+TEST_DB_NAME = validate_test_db_name("smart_inventory_test_auth")
+settings.MONGODB_DB_NAME = TEST_DB_NAME
 
 async def safe_create_test_user(database, username, password, role="ADMIN", is_active=True):
     if username == "admin":
@@ -34,9 +38,9 @@ async def cleanup_test_user(database, username):
 
 
 async def test_admin_protection():
-    database = db.client.get_database("smart_inventory")
+    database = db.client.get_database(TEST_DB_NAME)
     
-    # 7. Admin protection: test suite cannot overwrite/delete real admin
+    # Admin protection: test suite cannot overwrite/delete real admin
     try:
         await safe_create_test_user(database, "admin", "anything")
         assert False, "Should have raised RuntimeError"
@@ -45,18 +49,26 @@ async def test_admin_protection():
 
 
 async def test_correct_admin_credentials():
-    # 1. Correct admin credentials
-    response = client.post("/api/login", data={"username": "admin", "password": "Admin@123"})
+    database = db.client.get_database(TEST_DB_NAME)
+    await safe_create_test_user(database, "test_admin", "Admin@123")
+
+    # 1. Correct test admin credentials
+    response = client.post("/api/login", data={"username": "test_admin", "password": "Admin@123"})
     assert response.status_code == 200
     data = response.json()
     assert "access_token" in data
+    await cleanup_test_user(database, "test_admin")
 
 
 async def test_wrong_password():
+    database = db.client.get_database(TEST_DB_NAME)
+    await safe_create_test_user(database, "test_admin", "Admin@123")
+
     # 2. Wrong password
-    response = client.post("/api/login", data={"username": "admin", "password": "wrongpassword"})
+    response = client.post("/api/login", data={"username": "test_admin", "password": "wrongpassword"})
     assert response.status_code == 400
     assert "access_token" not in response.json()
+    await cleanup_test_user(database, "test_admin")
 
 
 async def test_wrong_username():
@@ -67,7 +79,7 @@ async def test_wrong_username():
 
 
 async def test_test_user_flow():
-    database = db.client.get_database("smart_inventory")
+    database = db.client.get_database(TEST_DB_NAME)
     
     # Create test user
     await safe_create_test_user(database, "test_auth_user", "Test@123")
@@ -86,21 +98,20 @@ async def test_test_user_flow():
 
 
 async def test_inactive_user():
-    database = db.client.get_database("smart_inventory")
+    database = db.client.get_database(TEST_DB_NAME)
     
     # Create inactive user
     await safe_create_test_user(database, "inactive_user", "Test@123", is_active=False)
     
     # 4. Inactive user cannot authenticate
     response = client.post("/api/login", data={"username": "inactive_user", "password": "Test@123"})
-    # Since auth.py currently does not check is_active, we should check what it does.
-    # Ah, wait! If auth.py doesn't check is_active, we need to modify auth.py to check it!
-    # I will assert it fails to enforce it.
+    assert response.status_code == 400
+    assert "access_token" not in response.json()
     await cleanup_test_user(database, "inactive_user")
 
 
 async def test_malformed_password_hash():
-    database = db.client.get_database("smart_inventory")
+    database = db.client.get_database(TEST_DB_NAME)
     
     # Create user with bad hash
     await safe_create_test_user(database, "bad_hash_user", "Test@123")
@@ -118,6 +129,7 @@ if __name__ == "__main__":
     import certifi
     db.client = AsyncMongoClient(settings.MONGODB_URI, tlsCAFile=certifi.where())
     async def run_tests():
+        await safe_drop_test_database(db.client, TEST_DB_NAME)
         print("Running test_admin_protection...")
         await test_admin_protection()
         print("Running test_correct_admin_credentials...")
@@ -132,6 +144,8 @@ if __name__ == "__main__":
         await test_inactive_user()
         print("Running test_malformed_password_hash...")
         await test_malformed_password_hash()
+
+        await safe_drop_test_database(db.client, TEST_DB_NAME)
         print("All tests passed!")
         
         if db.client:
