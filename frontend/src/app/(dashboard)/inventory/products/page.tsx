@@ -230,7 +230,7 @@ export default function ProductsPage() {
                         <div className="inline-flex flex-col items-center">
                           <Package className="w-12 h-12 text-slate-300 mb-3" />
                           <p className="text-slate-600 font-medium">No products registered</p>
-                          <p className="text-slate-400 text-sm mt-1">Click "Add Product" to get started.</p>
+                          <p className="text-slate-400 text-sm mt-1">Click &quot;Add Product&quot; to get started.</p>
                         </div>
                       </td>
                     </tr>
@@ -405,7 +405,7 @@ export default function ProductsPage() {
                     <img src={labelUrl} alt={`Label for ${labelSku}`} className="max-w-full h-auto" />
                   </div>
                   <p className="text-xs text-slate-500 text-center">
-                    Standard Industrial QR Format<br/>Print on 2"x2" adhesive stock
+                    Standard Industrial QR Format<br/>Print on 2&quot;x2&quot; adhesive stock
                   </p>
                 </div>
               ) : (

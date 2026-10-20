@@ -39,8 +39,9 @@ export default function LoginPage() {
       const data = await response.json();
       setAuthToken(data.access_token);
       router.push("/dashboard");
-    } catch (err: any) {
-      setError(err.message || "An error occurred");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "An error occurred";
+      setError(message);
     } finally {
       setLoading(false);
     }

@@ -10,31 +10,15 @@ interface SystemHealthClientProps {
   cameraSource: string;
 }
 
-export default function SystemHealthClient({ cameraConfigured, modelConfigured, cameraSource }: SystemHealthClientProps) {
-  const [backendUp, setBackendUp] = useState<boolean | null>(null);
-  const [mongoUp, setMongoUp] = useState<boolean | null>(null);
+interface StatusIndicatorProps {
+  up: boolean | null;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  detail?: string;
+}
 
-  useEffect(() => {
-    const checkHealth = async () => {
-      try {
-        const res = await fetch(`${API_BASE_URL}/health`);
-        if (res.ok) {
-          const data = await res.json();
-          setBackendUp(true);
-          setMongoUp(data.database === "connected");
-        } else {
-          setBackendUp(false);
-          setMongoUp(false);
-        }
-      } catch (err) {
-        setBackendUp(false);
-        setMongoUp(false);
-      }
-    };
-    checkHealth();
-  }, []);
-
-  const StatusIndicator = ({ up, label, icon: Icon, detail }: any) => (
+function StatusIndicator({ up, label, icon: Icon, detail }: StatusIndicatorProps) {
+  return (
     <div className="flex items-center justify-between p-3 bg-white border border-slate-200 rounded-lg shadow-sm">
       <div className="flex items-center">
         <div className={`p-2 rounded-full mr-3 ${up === true ? 'bg-emerald-100 text-emerald-600' : up === false ? 'bg-red-100 text-red-600' : 'bg-slate-100 text-slate-500'}`}>
@@ -54,6 +38,31 @@ export default function SystemHealthClient({ cameraConfigured, modelConfigured, 
       </div>
     </div>
   );
+}
+
+export default function SystemHealthClient({ cameraConfigured, modelConfigured, cameraSource }: SystemHealthClientProps) {
+  const [backendUp, setBackendUp] = useState<boolean | null>(null);
+  const [mongoUp, setMongoUp] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    const checkHealth = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/health`);
+        if (res.ok) {
+          const data = await res.json();
+          setBackendUp(true);
+          setMongoUp(data.database === "connected");
+        } else {
+          setBackendUp(false);
+          setMongoUp(false);
+        }
+      } catch {
+        setBackendUp(false);
+        setMongoUp(false);
+      }
+    };
+    checkHealth();
+  }, []);
 
   return (
     <div className="bg-slate-50 border border-gray-200 rounded-lg shadow-sm overflow-hidden mb-6">

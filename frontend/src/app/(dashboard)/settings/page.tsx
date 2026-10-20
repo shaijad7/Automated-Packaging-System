@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { Settings, Camera, Server, BrainCircuit, ScanLine, ShieldAlert, Activity, CheckSquare } from "lucide-react";
+import { Settings, Camera, BrainCircuit, ScanLine, ShieldAlert, CheckSquare } from "lucide-react";
 import SystemHealthClient from "./SystemHealthClient";
 
 export default async function SettingsPage() {
