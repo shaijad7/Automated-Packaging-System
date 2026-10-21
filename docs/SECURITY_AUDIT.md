@@ -62,5 +62,16 @@ Running `npm audit` on `frontend/` reports 5 high-severity vulnerability entries
   - `test_smoother.py` (7 passed)
 
 ### Frontend
-- `npm run lint`: **0 errors**, 23 warnings
-- `npm run build`: **Exit code 0**, TypeScript verified in 5.8s, 10/10 routes prerendered
+- `npm run lint`: **0 errors**, 20 warnings (Next.js 16 flat config verified)
+- `npm run build`: **Exit code 0**, TypeScript verified in 2.7s, Next.js 16 Proxy + dynamic SSR routes verified
+- `test_proxy_csp.js`: **6/6 automated security tests passed** (nonce unpredictability, production script-src strictness, XSS blocking, connect-src scoping, dev tooling compatibility, request pipeline header propagation)
+
+---
+
+## 5. Phase 3.0 Complete Security Remediation Summary
+
+| ID | Component | Severity | Description | Remediation Applied | Status |
+|---|---|---|---|---|:---:|
+| **SEC-09** | Frontend CSP | **High** | Permissive `script-src` (`unsafe-inline`, `unsafe-eval`) and wildcard `connect-src https:` weakened defense-in-depth against data exfiltration. | Implemented Next.js 16 `src/proxy.ts` with cryptographically unpredictable per-request nonces. Forwarded `x-nonce` to `RootLayout`. Eliminated `unsafe-inline` and `unsafe-eval` in production. Scoped `connect-src` strictly to `'self'` and the explicitly validated backend API origin. | **FIXED** |
+| **SEC-10** | Frontend Dependencies | **Medium** | `playwright` was declared in `dependencies`, inflating production dependency footprint. | Moved `playwright` to `devDependencies` in `frontend/package.json` and updated `frontend/package-lock.json` consistently. Verified UI test scripts remain fully functional. | **FIXED** |
+| **SEC-11** | Upstream `braces` Advisory | **Low / Tooling** | `GHSA-vfj7-8cjw-p6xm` / `CVE-2026-93687` (stack exhaustion in `braces <=3.0.3`). | Implemented deterministic local patch script `frontend/scripts/patch-braces.js` executed via `"postinstall"` hook in `frontend/package.json`. Bounds recursive AST depth to `MAX_DEPTH = 500` across `constants.js`, `parse.js`, `compile.js`, and `expand.js`, preventing V8 call stack exhaustion. Verified with offline regression test suite `frontend/test_braces_regression.js`. Production bundle confirmed 100% free of `braces` (`npm audit --omit=dev` exits 0). Upstream registry metadata remains pinned to `3.0.3` until official release. | **MITIGATED (Local) / UNRESOLVED (Upstream Registry)** |

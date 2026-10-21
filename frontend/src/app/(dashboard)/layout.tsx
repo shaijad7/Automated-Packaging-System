@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Package, Home, Settings, LogOut, Activity, FileText, Menu, X } from "lucide-react";
+import { Package, Home, Settings, LogOut, Activity, FileText, Menu, X, Copy } from "lucide-react";
 import { removeAuthToken } from "@/lib/api";
 
 export default function DashboardLayout({
@@ -23,6 +23,7 @@ export default function DashboardLayout({
   const navItems = [
     { name: "Dashboard", href: "/dashboard", icon: Home, disabled: false },
     { name: "Products", href: "/inventory/products", icon: Package, disabled: false },
+    { name: "Duplicate Boxes", href: "/duplicate-boxes", icon: Copy, disabled: false },
     { name: "Alerts", href: "/alerts", icon: Activity, disabled: false },
     { name: "Reports", href: "/reports", icon: FileText, disabled: false },
     { name: "Settings", href: "/settings", icon: Settings },

@@ -1,8 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Plus, Trash2, QrCode, X, Package } from "lucide-react";
-import { fetchWithAuth, getAuthToken } from "@/lib/api";
+import Image from "next/image";
+import { Plus, Trash2, QrCode, X, Package, Pencil } from "lucide-react";
+import { fetchWithAuth } from "@/lib/api";
+
+type InventoryRecord = {
+  sku: string;
+  quantity: number;
+};
 
 type Product = {
   sku: string;
@@ -21,6 +27,7 @@ export default function ProductsPage() {
   // Modals state
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isLabelModalOpen, setIsLabelModalOpen] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   
   // Add Product Form state
   const [newName, setNewName] = useState("");
@@ -29,6 +36,14 @@ export default function ProductsPage() {
   const [newActive, setNewActive] = useState(true);
   const [addError, setAddError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+
+  // Edit Product Form state
+  const [editSku, setEditSku] = useState("");
+  const [editName, setEditName] = useState("");
+  const [editDesc, setEditDesc] = useState("");
+  const [editActive, setEditActive] = useState(true);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
 
   // Label Modal state
   const [labelUrl, setLabelUrl] = useState<string | null>(null);
@@ -54,25 +69,29 @@ export default function ProductsPage() {
       const invData = await invRes.json();
 
       const invMap = new Map<string, number>();
-      invData.forEach((item: any) => {
+      invData.forEach((item: InventoryRecord) => {
         invMap.set(item.sku, item.quantity);
       });
 
-      const merged = prodData.map((p: any) => ({
+      const merged = prodData.map((p: Product) => ({
         ...p,
         quantity: invMap.has(p.sku) ? invMap.get(p.sku) : 0
       }));
 
       setProducts(merged);
-    } catch (err: any) {
-      setError(err.message || "An error occurred");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "An error occurred";
+      setError(msg);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchProducts();
+    const run = async () => {
+      await fetchProducts();
+    };
+    void run();
   }, []);
 
   const handleAddProduct = async (e: React.FormEvent) => {
@@ -103,15 +122,76 @@ export default function ProductsPage() {
       setNewSku("");
       setNewDesc("");
       setNewActive(true);
-    } catch (err: any) {
-      setAddError(err.message || "An error occurred");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "An error occurred";
+      setAddError(msg);
     } finally {
       setAdding(false);
     }
   };
 
+  const handleOpenEditModal = (product: Product) => {
+    setEditSku(product.sku);
+    setEditName(product.name);
+    setEditDesc(product.description || "");
+    setEditActive(product.is_active);
+    setEditError(null);
+    setIsEditModalOpen(true);
+  };
+
+  const handleEditProduct = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setEditError(null);
+
+    const trimmedName = editName.trim();
+    if (!trimmedName) {
+      setEditError("Product name cannot be empty");
+      return;
+    }
+
+    setEditing(true);
+
+    try {
+      const res = await fetchWithAuth(`/products/${editSku}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: trimmedName,
+          description: editDesc ? editDesc.trim() : null,
+          is_active: editActive,
+        }),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        let message = "Failed to update product";
+        if (typeof errData.detail === "string") {
+          message = errData.detail;
+        } else if (Array.isArray(errData.detail) && errData.detail.length > 0) {
+          message = errData.detail[0].msg || JSON.stringify(errData.detail);
+        }
+        throw new Error(message);
+      }
+
+      await fetchProducts();
+      setIsEditModalOpen(false);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "An error occurred updating the product";
+      setEditError(msg);
+    } finally {
+      setEditing(false);
+    }
+  };
+
   const handleDelete = async (sku: string) => {
-    if (!confirm(`Are you sure you want to delete ${sku}?`)) return;
+    const confirmationMessage =
+      `Warning: Deleting product "${sku}" will permanently remove this item from the catalog and delete its associated inventory count.\n\n` +
+      `• Historical events in the audit log will be retained.\n` +
+      `• Future scans matching this QR code will no longer be recognized as valid products.\n` +
+      `• For temporary discontinuation without data removal, use "Edit" to deactivate the product instead.\n\n` +
+      `Are you sure you want to permanently delete "${sku}"?`;
+
+    if (!confirm(confirmationMessage)) return;
     try {
       const res = await fetchWithAuth(`/products/${sku}`, { method: "DELETE" });
       if (!res.ok) {
@@ -119,10 +199,12 @@ export default function ProductsPage() {
         throw new Error(errData.detail || "Failed to delete product");
       }
       await fetchProducts();
-    } catch (err: any) {
-      alert(err.message || "An error occurred deleting the product");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "An error occurred deleting the product";
+      alert(msg);
     }
   };
+
 
   const handleViewLabel = async (sku: string) => {
     setIsLabelModalOpen(true);
@@ -131,13 +213,7 @@ export default function ProductsPage() {
     setLabelUrl(null);
 
     try {
-      const token = getAuthToken();
-      const headers = new Headers();
-      if (token) headers.set("Authorization", `Bearer ${token}`);
-
-      const res = await fetch(`http://localhost:8000/api/products/${sku}/label`, {
-        headers,
-      });
+      const res = await fetchWithAuth(`/products/${sku}/label`);
 
       if (!res.ok) {
         throw new Error("Failed to fetch label");
@@ -146,8 +222,9 @@ export default function ProductsPage() {
       const blob = await res.blob();
       const objectUrl = URL.createObjectURL(blob);
       setLabelUrl(objectUrl);
-    } catch (err: any) {
-      alert(err.message || "An error occurred loading the label");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "An error occurred loading the label";
+      alert(message);
       setIsLabelModalOpen(false);
     } finally {
       setLabelLoading(false);
@@ -282,13 +359,24 @@ export default function ProductsPage() {
                       </button>
                     </td>
                     <td className="px-6 py-4 text-right">
-                      <button
-                        onClick={() => handleDelete(product.sku)}
-                        className="text-slate-400 hover:text-red-600 transition-colors inline-flex items-center cursor-pointer focus:outline-none focus:ring-2 focus:ring-red-500 rounded p-1"
-                        title="Delete Product"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      <div className="inline-flex items-center space-x-2">
+                        <button
+                          onClick={() => handleOpenEditModal(product)}
+                          className="text-slate-400 hover:text-blue-600 transition-colors inline-flex items-center cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500 rounded p-1"
+                          title="Edit Product"
+                          aria-label={`Edit ${product.sku}`}
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(product.sku)}
+                          className="text-slate-400 hover:text-red-600 transition-colors inline-flex items-center cursor-pointer focus:outline-none focus:ring-2 focus:ring-red-500 rounded p-1"
+                          title="Delete Product"
+                          aria-label={`Delete ${product.sku}`}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ));
@@ -402,7 +490,7 @@ export default function ProductsPage() {
               ) : labelUrl ? (
                 <div className="flex flex-col items-center">
                   <div className="border border-gray-200 p-2 bg-white shadow-sm mb-4">
-                    <img src={labelUrl} alt={`Label for ${labelSku}`} className="max-w-full h-auto" />
+                    <Image unoptimized src={labelUrl} alt={`Label for ${labelSku}`} width={256} height={256} className="max-w-full h-auto" />
                   </div>
                   <p className="text-xs text-slate-500 text-center">
                     Standard Industrial QR Format<br/>Print on 2&quot;x2&quot; adhesive stock
@@ -431,6 +519,95 @@ export default function ProductsPage() {
                 </a>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Product Modal */}
+      {isEditModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md overflow-hidden">
+            <div className="flex justify-between items-center p-5 border-b border-gray-200">
+              <h2 className="text-lg font-bold text-slate-800">Edit Product</h2>
+              <button
+                onClick={() => setIsEditModalOpen(false)}
+                className="text-gray-400 hover:text-gray-600 cursor-pointer focus:outline-none focus:ring-2 focus:ring-slate-500 rounded"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleEditProduct} className="p-5 space-y-4">
+              {editError && (
+                <div className="p-3 text-sm text-red-700 bg-red-50 rounded border border-red-200" role="alert">
+                  {editError}
+                </div>
+              )}
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">SKU</label>
+                <input
+                  type="text"
+                  disabled
+                  readOnly
+                  value={editSku}
+                  className="w-full px-3 py-2 border border-gray-200 bg-gray-100 rounded-md font-mono text-slate-500 cursor-not-allowed select-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Product Name *</label>
+                <input
+                  type="text"
+                  required
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 bg-white placeholder-slate-400"
+                  placeholder="e.g. Type-C Adapter"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Description</label>
+                <textarea
+                  value={editDesc}
+                  onChange={(e) => setEditDesc(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 bg-white placeholder-slate-400"
+                  placeholder="Optional details..."
+                  rows={2}
+                />
+              </div>
+
+              <div className="flex items-center">
+                <input
+                  type="checkbox"
+                  id="editIsActive"
+                  checked={editActive}
+                  onChange={(e) => setEditActive(e.target.checked)}
+                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded cursor-pointer"
+                />
+                <label htmlFor="editIsActive" className="ml-2 block text-sm text-slate-700 cursor-pointer">
+                  Active Status
+                </label>
+              </div>
+
+              <div className="pt-4 flex justify-end space-x-3">
+                <button
+                  type="button"
+                  onClick={() => setIsEditModalOpen(false)}
+                  className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-800 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={editing}
+                  className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md disabled:bg-blue-400 transition-colors shadow-sm cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                >
+                  {editing ? "Saving..." : "Save Changes"}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

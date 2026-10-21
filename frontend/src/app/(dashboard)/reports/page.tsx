@@ -1,9 +1,8 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { fetchWithAuth, getAuthToken } from "@/lib/api";
+import { fetchWithAuth } from "@/lib/api";
 import { Box, CheckCircle, AlertTriangle, PackagePlus, AlertCircle, Download, Search, X } from "lucide-react";
-import { API_BASE_URL } from "@/lib/api";
 
 interface Summary {
   overall_boxes: number;
@@ -72,15 +71,19 @@ export default function ReportsPage() {
       
       const json = await res.json();
       setData(json);
-    } catch (err: any) {
-      setError(err.message || "An error occurred");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "An error occurred";
+      setError(message);
     } finally {
       setLoading(false);
     }
   }, [activeFilters]);
 
   useEffect(() => {
-    loadReport();
+    const run = async () => {
+      await loadReport();
+    };
+    void run();
   }, [loadReport]);
 
   const handleApplyFilters = () => {
@@ -107,40 +110,46 @@ export default function ReportsPage() {
       if (activeFilters.qr_status && activeFilters.qr_status !== "ALL") params.append("qr_status", activeFilters.qr_status);
       if (activeFilters.sku) params.append("sku", activeFilters.sku);
 
-      const token = getAuthToken();
-      const res = await fetch(`${API_BASE_URL}/dashboard/reports/export.csv?${params.toString()}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-      
+      const res = await fetchWithAuth(`/dashboard/reports/export.csv?${params.toString()}`);
+
       if (!res.ok) {
-        throw new Error("Failed to export CSV");
+        if (res.status === 401) {
+          throw new Error("Session expired. Redirecting to login...");
+        }
+        let errorDetail = "Failed to export CSV";
+        try {
+          const errData = await res.json();
+          if (errData?.detail) errorDetail = errData.detail;
+        } catch {
+          // not json
+        }
+        throw new Error(errorDetail);
       }
-      
+
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      
+
       // Get filename from header if possible
       let filename = `inventory-report-${new Date().toISOString().split('T')[0]}.csv`;
       const disposition = res.headers.get('content-disposition');
       if (disposition && disposition.indexOf('attachment') !== -1) {
         const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
         const matches = filenameRegex.exec(disposition);
-        if (matches != null && matches[1]) { 
+        if (matches != null && matches[1]) {
           filename = matches[1].replace(/['"]/g, '');
         }
       }
-      
+
       a.download = filename;
       document.body.appendChild(a);
       a.click();
       a.remove();
       window.URL.revokeObjectURL(url);
-    } catch (err: any) {
-      setExportError(err.message || "Failed to export CSV");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to export CSV";
+      setExportError(message);
     } finally {
       setExportLoading(false);
     }
@@ -150,46 +159,52 @@ export default function ReportsPage() {
     try {
       setPdfLoading(true);
       setExportError(null);
-      
+
       const params = new URLSearchParams();
       if (activeFilters.start_date) params.append("start_date", activeFilters.start_date);
       if (activeFilters.end_date) params.append("end_date", activeFilters.end_date);
       if (activeFilters.qr_status && activeFilters.qr_status !== "ALL") params.append("qr_status", activeFilters.qr_status);
       if (activeFilters.sku) params.append("sku", activeFilters.sku);
 
-      const token = getAuthToken();
-      const res = await fetch(`${API_BASE_URL}/dashboard/reports/export.pdf?${params.toString()}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-      
+      const res = await fetchWithAuth(`/dashboard/reports/export.pdf?${params.toString()}`);
+
       if (!res.ok) {
-        throw new Error("Failed to export PDF");
+        if (res.status === 401) {
+          throw new Error("Session expired. Redirecting to login...");
+        }
+        let errorDetail = "Failed to export PDF";
+        try {
+          const errData = await res.json();
+          if (errData?.detail) errorDetail = errData.detail;
+        } catch {
+          // not json
+        }
+        throw new Error(errorDetail);
       }
-      
+
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      
+
       let filename = `inventory-report-${new Date().toISOString().split('T')[0]}.pdf`;
       const disposition = res.headers.get('content-disposition');
       if (disposition && disposition.indexOf('attachment') !== -1) {
         const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
         const matches = filenameRegex.exec(disposition);
-        if (matches != null && matches[1]) { 
+        if (matches != null && matches[1]) {
           filename = matches[1].replace(/['"]/g, '');
         }
       }
-      
+
       a.download = filename;
       document.body.appendChild(a);
       a.click();
       a.remove();
       window.URL.revokeObjectURL(url);
-    } catch (err: any) {
-      setExportError(err.message || "Failed to export PDF");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to export PDF";
+      setExportError(message);
     } finally {
       setPdfLoading(false);
     }

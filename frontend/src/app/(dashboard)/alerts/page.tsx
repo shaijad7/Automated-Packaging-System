@@ -54,15 +54,18 @@ export default function AlertsPage() {
       }
       const data = await res.json();
       setAlerts(data);
-    } catch (err: any) {
-      setError(err.message || "An error occurred");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "An error occurred");
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchAlerts();
+    const run = async () => {
+      await fetchAlerts();
+    };
+    void run();
   }, []);
 
   const handleAcknowledge = async (alertId: string) => {
@@ -86,8 +89,8 @@ export default function AlertsPage() {
            if (updatedAlert) setSelectedAlert(updatedAlert);
         }
       }
-    } catch (err: any) {
-      setMutationError(err.message || "An error occurred");
+    } catch (err: unknown) {
+      setMutationError(err instanceof Error ? err.message : "An error occurred");
     } finally {
       setMutatingId(null);
     }
@@ -119,8 +122,8 @@ export default function AlertsPage() {
          if (updatedAlert) setSelectedAlert(updatedAlert);
       }
       setIsResolveDialogOpen(false);
-    } catch (err: any) {
-      setMutationError(err.message || "An error occurred");
+    } catch (err: unknown) {
+      setMutationError(err instanceof Error ? err.message : "An error occurred");
     } finally {
       setMutatingId(null);
     }
@@ -140,7 +143,7 @@ export default function AlertsPage() {
         const wStart = new Date(alert.window_start).getTime();
         const wEnd = new Date(alert.window_end).getTime();
         
-        data.events.forEach((e: any) => {
+        data.events.forEach((e: { timestamp: string; qr_status?: string; sku?: string }) => {
           const ts = new Date(e.timestamp.endsWith('Z') || e.timestamp.includes('+') ? e.timestamp : `${e.timestamp}Z`).getTime();
           if (ts >= wStart && ts <= wEnd) {
              if (e.qr_status !== 'VALID_QR' && e.sku) {

@@ -73,25 +73,28 @@ Only a valid QR associated with a known active product is eligible for the corre
 - JWT authentication
 - bcrypt password hashing
 - Admin-only application authorization
-- MongoDB Atlas integration
-- Product management
-- Inventory records
-- Event records
-- Alert management
-- Dashboard summary APIs
-- Analytics APIs
-- Health endpoint
+- Protected edge event ingestion via `X-API-Key` machine-to-machine validation
+- MongoDB Atlas integration with async PyMongo client
+- Product management (`GET`, `POST`, `PATCH /api/products/{sku}`, `DELETE`)
+- Inventory records and real-time stock increments
+- Line-crossing event records and duplicate idempotency
+- Edge node health heartbeat probe (`POST /api/edge/heartbeat`)
+- System health diagnostic endpoint (`GET /api/dashboard/system-health`)
+- Duplicate boxes and SKU grouping analysis (`GET /api/dashboard/duplicate-boxes`)
+- Alert management with active spike deduplication
+- Dashboard summary and analytics APIs
+- Health endpoint (`GET /api/health`)
 
 ### Product Management
 
 Administrators can:
 
-- Register products
-- Set product SKU
-- Add product descriptions
-- Activate/deactivate products
-- Generate standard QR labels
-- Download QR labels
+- Register products with unique SKUs
+- Set product name, SKU, and description
+- Edit existing products (`PATCH /api/products/{sku}`) — update name, description, and active status while SKU remains immutable
+- Activate/deactivate products (inactive products reject new inventory additions)
+- Generate standard QR labels (`INV|<SKU>`)
+- Download QR labels as high-resolution PNGs
 - Delete products
 
 The backend generates:
@@ -104,18 +107,17 @@ for each registered product.
 
 ### Dashboard
 
-The Next.js dashboard provides:
+The Next.js industrial dashboard provides:
 
-- Overall box count
-- Valid QR count
-- QR exception count
-- Inventory added
-- Current inventory
-- Recent events
-- Processing trend
-- QR status distribution
-- Inventory-by-product chart
-- 24-hour, 7-day, 30-day and all-time analytics views
+- Overall box count, Valid QR count, QR exception count, and Inventory added KPI cards
+- Exception Breakdown card (No QR, Unreadable QR, Invalid QR counts)
+- Current inventory table with merged real-time quantities
+- Recent events table with QR status badges
+- Processing trend charts and QR status distribution pie chart
+- Dedicated Duplicate Boxes & SKU Groups page (`/duplicate-boxes`) with active schema contract transparency
+- Live System Health telemetry indicators on `/settings` (Backend, MongoDB, Camera Stream, AI Model status)
+- Centralized Reports history page (`/reports`) with real-time filters and authenticated CSV/PDF export downloads
+- 24-hour, 7-day, 30-day, and all-time analytics views
 
 ### Alerts
 
@@ -437,22 +439,31 @@ npm install
 
 ## Running the Application
 
-### 1. Start the Backend API
+### 1. Configure the Database Service (MongoDB)
 
-From `backend` directory with `venv` activated:
+The backend connects to MongoDB via the connection string configured in `backend/.env` (`MONGODB_URI`):
+- **MongoDB Atlas:** Ensure your IP address is whitelisted in MongoDB Atlas Network Access and valid connection credentials are set.
+- **Local MongoDB:** Start the MongoDB service daemon on `localhost:27017` (`mongod`).
+
+### 2. Start the Backend API
+
+From the `backend` directory with `venv` activated:
 
 ```powershell
+cd backend
+.\venv\Scripts\Activate.ps1
 uvicorn app.main:app --reload --port 8000
 ```
 - API Base URL: `http://localhost:8000`
 - Interactive Swagger API Docs: `http://localhost:8000/docs`
 - Health Check: `http://localhost:8000/api/health`
 
-### 2. Start the Frontend Dashboard
+### 3. Start the Frontend Dashboard
 
-From `frontend` directory:
+From the `frontend` directory in a separate terminal:
 
 ```powershell
+cd frontend
 npm run dev
 ```
 - Open `http://localhost:3000` in your browser.
@@ -462,42 +473,50 @@ npm run dev
   npm start
   ```
 
-### 3. Run Camera Discovery (Optional)
+### 4. Run Camera Discovery (Optional)
 
 Before starting the CV pipeline, you can discover all connected camera devices and their supported backends:
 
-From `cv_pipeline` directory with `venv` activated:
+From the `cv_pipeline` directory with `venv` activated:
+
 ```powershell
+cd cv_pipeline
+.\venv\Scripts\Activate.ps1
 python discover_cameras.py
 ```
 Note the detected index (e.g., `0` for integrated webcam, `1` for external USB camera) and update `CAMERA_SOURCE` in `cv_pipeline/.env`.
 
-### 4. Start the Computer Vision Pipeline
+### 5. Start the Computer Vision Pipeline (Physical Camera Required)
 
-From `cv_pipeline` directory with `venv` activated:
+From the `cv_pipeline` directory with `venv` activated in a separate terminal:
 
 ```powershell
+cd cv_pipeline
+.\venv\Scripts\Activate.ps1
 python run_pipeline.py
 ```
 
+> **WARNING**: Starting the computer vision pipeline (`python run_pipeline.py`) activates the camera, processes real frames, and emits real inventory counting events to the backend API (`POST /api/events/`). If connected to a live backend with production database configuration, real inventory records will be modified. Do **not** run the live pipeline against production for a test or demonstration without an explicitly isolated test database or disposable test products.
+
 - Opens the OpenCV real-time visual feed with tracking boxes, centroid tracks, counting line, and QR status overlay.
 - Transmits line-crossing events to `http://localhost:8000/api/events/` via background worker.
+- Emits periodic edge telemetry to `http://localhost:8000/api/edge/heartbeat`.
 - Press `q` or `Ctrl+C` in the terminal to stop gracefully.
 
 ---
 
 ## Running Tests
 
-All tests are verified and can be executed independently.
+All test suites are automated, deterministic, and can be executed independently.
 
 ### Backend Tests (100% Database Isolated)
 
-> **Database Safety Guarantee**: All test scripts run against dedicated temporary test databases (`smart_inventory_test_*`) and drop them immediately upon completion. Real inventory records, production events, and real administrator credentials are never modified, overwritten, or deleted.
+> **Database Safety Guarantee**: All backend test scripts run against dedicated temporary test databases (`smart_inventory_test_*`) guarded by `validate_test_db_name()` and drop them immediately upon completion. Real inventory records, production events, and administrator credentials are never modified, overwritten, or deleted.
 
-From `backend` directory with `venv` activated:
+From the `backend` directory with `venv` activated:
 
 ```powershell
-# Authentication, JWT, and RBAC tests
+# Authentication, JWT, and RBAC authorization tests
 python test_auth_logic.py
 
 # Inventory counting and duplicate event idempotency tests
@@ -509,37 +528,80 @@ python test_ambiguous_backend.py
 # Product registration, duplicate SKU, and label PNG tests
 python test_registration.py
 
-# Alert threshold, state transitions, and deduplication tests
+# Phase 5.15B Product PATCH editing and active/inactive toggle tests
+python test_phase5_15b_product_edit.py
+
+# Phase 5.10 Duplicate boxes and same-SKU grouping analysis tests
+python test_duplicate_boxes.py
+
+# Phase 5.12 Edge node telemetry heartbeat and system health tests
+python test_edge_heartbeat.py
+
+# Backend and database connectivity health probe tests
+python test_health_route.py
+
+# Alert threshold, state transitions, and active deduplication tests
 python test_phase14a_final.py
 ```
 
-### Computer Vision Tests (69 Unit Tests)
+### Computer Vision Tests (80 Unit Tests)
 
-From project root or `cv_pipeline` directory with `venv` activated:
+The computer vision test suite contains 80 unit tests across 9 modules. All tests are 100% isolated, mock network transactions and camera hardware, and execute hermetically in ~16 seconds without requiring camera devices, physical conveyor hardware, or database connections.
+
+From the `cv_pipeline` directory with `venv` activated:
 
 ```powershell
-pytest cv_pipeline/tests/ -v
+pytest tests/ -v
 ```
 
+(Alternatively, from the repository root: `cv_pipeline\venv\Scripts\python.exe -m pytest cv_pipeline/tests/ -v`)
+
 Tests cover:
-- `test_api_client.py`: `X-API-Key` headers, event submission, production worker acknowledgement validation, retry logic, 401 response handling.
-- `test_association.py`: Spatial IoU bounding box association, multi-box deduplication.
-- `test_counting_independence.py`: Counting line independence from QR success, double-count prevention.
-- `test_event_spool.py`: Durable SQLite WAL event spooling, restart recovery, retry backoff, bounded 401 handling, capacity limits, idempotent duplicate acknowledgement.
-- `test_model_and_camera.py`: Missing model honesty, class 0 (`box`) verification, camera disconnect handling.
-- `test_payload_validator.py`: `INV|<SKU>` syntax validation, corrupted prefix/separator rejection.
-- `test_qr_detector.py`: Native OpenCV QR detector, crop ROI offsets, duplicate suppression.
-- `test_smoother.py`: Multi-frame QR payload smoothing, expiration, reappearing track reset.
+- `test_api_client.py` (24 tests): `X-API-Key` headers, event submission, production worker acknowledgement validation, retry logic, 401 response handling, network timeout preservation.
+- `test_association.py` (9 tests): Spatial IoU bounding box association, multi-box deduplication, ambiguous QR handling.
+- `test_counting_independence.py` (2 tests): Counting line independence from QR success, double-count prevention.
+- `test_event_spool.py` (13 tests): Durable SQLite WAL event spooling, restart recovery, retry backoff, bounded 401 handling, capacity limits, idempotent duplicate acknowledgement.
+- `test_heartbeat.py` (11 tests): Edge health tracker lifecycle, camera/model degradation and stall detection, thread lifecycle, and shutdown beacon.
+- `test_model_and_camera.py` (4 tests): Missing model honesty, class 0 (`box`) verification, camera disconnect handling.
+- `test_payload_validator.py` (6 tests): `INV|<SKU>` syntax validation, corrupted prefix/separator rejection.
+- `test_qr_detector.py` (4 tests): Native OpenCV QR detector, crop ROI offsets, duplicate suppression.
+- `test_smoother.py` (7 tests): Multi-frame QR payload smoothing, expiration, reappearing track reset.
+
+### Hermetic Playwright UI Tests (5 Test Suites)
+
+The frontend test suite includes 5 dedicated Playwright test scripts. These tests use Playwright route interception (`page.route`) to mock all backend and authentication endpoints. They run hermetically and require **only** the frontend development server (`npm run dev`) on port 3000; they do **not** require a running backend or MongoDB database.
+
+From the repository root (with `npm run dev` running in `frontend/`):
+
+```powershell
+# 1. Product creation, duplicate SKU rejection, PATCH editing, active toggle, QR label modal
+node frontend/test_products_ui.js
+
+# 2. Reports table, active filter query transmission, CSV/PDF blob downloads, 500 error display, 401 redirect
+node frontend/test_reports_ui.js
+
+# 3. Duplicate Boxes navigation, retry action, empty state, same-SKU groups, schema contract notice
+node frontend/test_duplicate_boxes_ui.js
+
+# 4. Settings Live Health probe states (UP, 503 DB down, network failure, 500 degraded, recovery)
+node frontend/test_settings_health_ui.js
+
+# 5. Live Edge Camera & AI Model telemetry states (UNKNOWN, fresh UP, stale DOWN, failure DEGRADED, HTTP 500)
+node frontend/test_edge_health_ui.js
+```
 
 ### Frontend Quality Checks
 
-From `frontend` directory:
+From the `frontend` directory:
 
 ```powershell
+# TypeScript verification (clean compile, 0 errors)
+npx tsc --noEmit
+
 # Lint check (0 errors)
 npm run lint
 
-# TypeScript verification and production build
+# Production build (11/11 static pages prerendered)
 npm run build
 ```
 
@@ -876,6 +938,20 @@ Real-world inference speed depends on camera resolution, CPU performance, model 
 QR recognition can vary with distance, angle, lighting, motion blur, reflections, print quality, and occlusion.
 
 QR smoothing was added to reduce frame-to-frame status instability.
+
+### Physical Box Serialization & Duplicate Analysis Contract
+
+The standard QR payload format is:
+
+```text
+INV|<SKU>
+```
+
+This payload identifies the product catalog item rather than an individual physical box serial number (e.g. `BOX-UUID-1234`). In packaging operations where multiple distinct physical boxes carry identical product labels, each box is correctly counted as a separate line-crossing event. On the Duplicate Boxes page (`/duplicate-boxes`), these observations are transparently categorized under **Same-SKU Multi-Box Groups** (`same_sku_groups`) accompanied by an active schema contract notice, rather than being treated as conflicting scans.
+
+### Development Dependency Tooling Advisory (`braces`)
+
+Running `npm audit` in the `frontend` directory reports 5 high-severity vulnerabilities originating from a transitive development dependency (`braces <=3.0.3` via `micromatch` -> `fast-glob` -> `@next/eslint-plugin-next` -> `eslint-config-next`). This vulnerability is confined strictly to the offline ESLint development toolchain and has zero production runtime exposure. As established in the security audit, **never run `npm audit fix --force`**, as it downgrades `eslint-config-next` to version 14 and breaks Next.js 16 flat-config exports.
 
 ### Production Deployment
 

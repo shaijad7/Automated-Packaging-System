@@ -36,7 +36,7 @@ export async function fetchWithAuth(url: string, options: RequestInit = {}) {
   if (response.status === 401) {
     removeAuthToken();
     if (typeof window !== "undefined" && window.location.pathname !== '/login') {
-      window.location.href = '/login';
+      window.location.replace('/login');
     }
   }
   

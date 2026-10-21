@@ -38,6 +38,10 @@ interface AnalyticsData {
   distribution: { name: string; value: number }[];
 }
 
+
+
+type TimeRange = "24h" | "7d" | "30d" | "all";
+
 export default function DashboardPage() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
@@ -48,6 +52,8 @@ export default function DashboardPage() {
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
   const [timeRange, setTimeRange] = useState<"24h" | "7d" | "30d" | "all">("all");
   const [analyticsLoading, setAnalyticsLoading] = useState(true);
+
+
 
   const fetchDashboard = async (isBackground = false) => {
     try {
@@ -64,8 +70,9 @@ export default function DashboardPage() {
       setSummary(await sumRes.json());
       setInventory(await invRes.json());
       setEvents(await evtRes.json());
-    } catch (err: any) {
-      if (!isBackground) setError(err.message || "An error occurred");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "An error occurred";
+      if (!isBackground) setError(msg);
       else console.error("Background refresh failed", err);
     } finally {
       if (!isBackground) setLoading(false);
@@ -78,7 +85,7 @@ export default function DashboardPage() {
       const res = await fetchWithAuth(`/dashboard/analytics?range=${range}`);
       if (!res.ok) throw new Error("Failed to load analytics");
       setAnalytics(await res.json());
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
     } finally {
       if (!isBackground) setAnalyticsLoading(false);
@@ -86,11 +93,17 @@ export default function DashboardPage() {
   };
 
   useEffect(() => {
-    fetchDashboard();
+    const run = async () => {
+      await fetchDashboard();
+    };
+    void run();
   }, []);
 
   useEffect(() => {
-    fetchAnalytics(timeRange);
+    const run = async () => {
+      await fetchAnalytics(timeRange);
+    };
+    void run();
   }, [timeRange]);
 
   useEffect(() => {
@@ -191,11 +204,12 @@ export default function DashboardPage() {
         </div>
       </div>
 
+
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mt-8 mb-4 gap-4 sm:gap-0">
         <h3 className="text-lg font-bold text-slate-800">Analytics</h3>
         <select 
           value={timeRange} 
-          onChange={(e) => setTimeRange(e.target.value as any)}
+          onChange={(e) => setTimeRange(e.target.value as TimeRange)}
           className="border border-gray-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer text-slate-700 bg-white"
         >
           <option value="24h">Last 24 hours</option>

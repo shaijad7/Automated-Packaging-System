@@ -2,11 +2,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.models.user import TokenData
 from app.api.deps import get_current_active_admin
 from app.db.mongodb import get_db
+from app.services.system_health import get_edge_health
 import pymongo
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 from fastapi import HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 import io
 import csv
 from reportlab.lib.pagesizes import letter, landscape
@@ -446,3 +447,167 @@ async def export_reports_pdf(
         headers={"Content-Disposition": f"attachment; filename=inventory-report-{datetime.utcnow().strftime('%Y-%m-%d')}.pdf"}
     )
 
+
+@router.get("/duplicate-boxes")
+async def get_duplicate_boxes(current_user: TokenData = Depends(get_current_active_admin)):
+    """
+    Returns dashboard analytics for duplicate box detection and same-SKU grouping.
+    Strictly ADMIN-only. Read-only queries with bounded limits.
+    Distinguishes repeated scans / ID conflicts from valid same-SKU inventory additions.
+    """
+    db = get_db()
+
+    # 1. Check for explicit Box ID conflicts or repeated scans (if box_id is stored in schema)
+    box_conflicts_pipeline = [
+        {"$match": {"box_id": {"$exists": True, "$ne": None}}},
+        {
+            "$group": {
+                "_id": "$box_id",
+                "skus": {"$addToSet": "$sku"},
+                "count": {"$sum": 1},
+                "first_seen": {"$min": "$timestamp"},
+                "last_seen": {"$max": "$timestamp"},
+                "event_ids": {"$push": "$event_id"}
+            }
+        },
+        {"$match": {"$or": [{"count": {"$gt": 1}}, {"skus.1": {"$exists": True}}]}},
+        {"$limit": 50}
+    ]
+    box_cursor = await db["events"].aggregate(box_conflicts_pipeline)
+    raw_box_conflicts = await box_cursor.to_list(length=50)
+
+    repeated_scans_and_conflicts = []
+    sample_box_doc = await db["events"].find_one({"box_id": {"$exists": True, "$ne": None}})
+    has_box_ids = bool(sample_box_doc)
+
+    for doc in raw_box_conflicts:
+        box_id = str(doc["_id"])
+        skus = [s for s in doc.get("skus", []) if s is not None]
+        count = doc.get("count", 1)
+        first_seen = doc.get("first_seen")
+        last_seen = doc.get("last_seen")
+        first_seen_str = first_seen.isoformat() if isinstance(first_seen, datetime) else str(first_seen) if first_seen else "-"
+        last_seen_str = last_seen.isoformat() if isinstance(last_seen, datetime) else str(last_seen) if last_seen else "-"
+
+        # Lookup product name for primary SKU
+        product_name = None
+        if skus:
+            prod = await db["products"].find_one({"sku": skus[0]})
+            if prod:
+                product_name = prod.get("name")
+
+        if len(skus) > 1:
+            repeated_scans_and_conflicts.append({
+                "box_id": box_id,
+                "sku": ", ".join(skus),
+                "product_name": product_name,
+                "category": "ID_CONFLICT",
+                "reason": f"Box ID '{box_id}' associated with conflicting SKUs: {', '.join(skus)}",
+                "first_seen": first_seen_str,
+                "last_seen": last_seen_str,
+                "review_status": "NEEDS_REVIEW",
+                "details": f"Observed {count} times across {len(skus)} distinct SKUs."
+            })
+        elif count > 1:
+            repeated_scans_and_conflicts.append({
+                "box_id": box_id,
+                "sku": skus[0] if skus else "-",
+                "product_name": product_name,
+                "category": "REPEATED_SCAN",
+                "reason": f"Box ID '{box_id}' observed {count} times with identical SKU.",
+                "first_seen": first_seen_str,
+                "last_seen": last_seen_str,
+                "review_status": "REVIEW_CANDIDATE",
+                "details": f"{count} scan events recorded for this Box ID."
+            })
+
+    # 2. Same-SKU Groups (separate physical boxes sharing a product SKU)
+    same_sku_pipeline = [
+        {"$match": {"sku": {"$ne": None}, "status": "SUCCESS"}},
+        {
+            "$group": {
+                "_id": "$sku",
+                "count": {"$sum": 1},
+                "first_seen": {"$min": "$timestamp"},
+                "last_seen": {"$max": "$timestamp"},
+                "sample_events": {"$push": {"event_id": "$event_id", "timestamp": "$timestamp", "track_id": "$track_id"}},
+                "box_ids": {"$addToSet": "$box_id"}
+            }
+        },
+        {"$match": {"count": {"$gt": 1}}},
+        {
+            "$lookup": {
+                "from": "products",
+                "localField": "_id",
+                "foreignField": "sku",
+                "as": "product_info"
+            }
+        },
+        {"$unwind": {"path": "$product_info", "preserveNullAndEmptyArrays": True}},
+        {"$sort": {"count": -1}},
+        {"$limit": 50}
+    ]
+    same_sku_cursor = await db["events"].aggregate(same_sku_pipeline)
+    raw_same_sku = await same_sku_cursor.to_list(length=50)
+
+    same_sku_groups = []
+    for doc in raw_same_sku:
+        sku = doc["_id"]
+        product_info = doc.get("product_info") or {}
+        product_name = product_info.get("name")
+        first_seen = doc.get("first_seen")
+        last_seen = doc.get("last_seen")
+        first_seen_str = first_seen.isoformat() if isinstance(first_seen, datetime) else str(first_seen) if first_seen else "-"
+        last_seen_str = last_seen.isoformat() if isinstance(last_seen, datetime) else str(last_seen) if last_seen else "-"
+        sample_event_ids = [e["event_id"] for e in doc.get("sample_events", [])[:5]]
+        valid_box_ids = [b for b in doc.get("box_ids", []) if b is not None]
+
+        same_sku_groups.append({
+            "sku": sku,
+            "product_name": product_name,
+            "box_count": doc["count"],
+            "sample_event_ids": sample_event_ids,
+            "box_ids": valid_box_ids if valid_box_ids else None,
+            "has_distinct_box_ids": len(valid_box_ids) > 0,
+            "first_seen": first_seen_str,
+            "last_seen": last_seen_str,
+            "review_status": "VALID_INVENTORY_GROUP",
+            "reason": "Multiple distinct physical box observations sharing the same product SKU. These represent valid, separate inventory items."
+        })
+
+    repeated_count = sum(1 for item in repeated_scans_and_conflicts if item["category"] in ("REPEATED_SCAN", "REPEATED_EVENT"))
+    conflict_count = sum(1 for item in repeated_scans_and_conflicts if item["category"] == "ID_CONFLICT")
+
+    return {
+        "summary": {
+            "repeated_scans_count": repeated_count,
+            "id_conflicts_count": conflict_count,
+            "same_sku_groups_count": len(same_sku_groups),
+            "has_serialized_box_ids": has_box_ids,
+            "schema_notice": (
+                "Physical boxes currently use product-level QR codes (INV|<SKU>). "
+                "Unique serialized physical Box IDs are not tracked in the current schema. "
+                "Separate line crossings with the same SKU represent valid distinct inventory additions, not duplicates."
+            )
+        },
+        "repeated_scans_and_conflicts": repeated_scans_and_conflicts,
+        "same_sku_groups": same_sku_groups
+    }
+
+
+@router.get("/system-health")
+async def get_system_health(current_user: TokenData = Depends(get_current_active_admin)):
+    """
+    ADMIN-only endpoint to retrieve live edge node health telemetry.
+    Returns evaluated camera and model health, freshness window, and timestamps.
+    Disables caching so status changes are delivered immediately to the UI.
+    """
+    data = get_edge_health()
+    return JSONResponse(
+        content=data,
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0"
+        }
+    )

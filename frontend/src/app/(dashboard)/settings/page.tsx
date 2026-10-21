@@ -35,8 +35,8 @@ export default async function SettingsPage() {
   const cvConfig = parseEnv(cvEnv);
   const backendConfig = parseEnv(backendEnv);
 
-  const cameraSource = cvConfig.CAMERA_SOURCE || "Not set";
-  const modelConfigured = !!cvConfig.YOLO_MODEL_PATH;
+  const cameraSource = cvConfig.CAMERA_SOURCE || "0 (Default)";
+  const modelPath = cvConfig.YOLO_MODEL_PATH || "models/best.pt";
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -49,9 +49,8 @@ export default async function SettingsPage() {
       </div>
 
       <SystemHealthClient 
-        cameraConfigured={true} 
-        modelConfigured={modelConfigured} 
         cameraSource={cameraSource}
+        modelPath={modelPath}
       />
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

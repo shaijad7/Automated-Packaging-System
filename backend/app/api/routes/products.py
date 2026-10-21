@@ -4,7 +4,7 @@ import io
 import qrcode
 from PIL import Image, ImageDraw, ImageFont
 
-from app.models.product import ProductCreate, ProductInDB
+from app.models.product import ProductCreate, ProductInDB, ProductUpdate
 from app.models.user import TokenData
 from app.api.deps import get_current_active_admin
 from app.db.mongodb import get_db
@@ -50,6 +50,32 @@ async def delete_product(sku: str, current_user: TokenData = Depends(get_current
     # Optionally delete inventory too
     await db["inventory"].delete_one({"sku": sku})
     return None
+
+@router.patch("/{sku}", response_model=ProductInDB)
+async def update_product(
+    sku: str,
+    product_update: ProductUpdate,
+    current_user: TokenData = Depends(get_current_active_admin),
+):
+    db = get_db()
+    existing = await db["products"].find_one({"sku": sku})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    update_data = product_update.model_dump(exclude_unset=True)
+    if not update_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Empty patch: at least one editable field must be provided",
+        )
+
+    await db["products"].update_one(
+        {"sku": sku},
+        {"$set": update_data}
+    )
+
+    updated_product = await db["products"].find_one({"sku": sku})
+    return ProductInDB(**updated_product)
 
 @router.get("/{sku}/label")
 async def generate_label(sku: str, current_user: TokenData = Depends(get_current_active_admin)):

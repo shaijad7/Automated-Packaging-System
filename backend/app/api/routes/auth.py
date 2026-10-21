@@ -1,5 +1,5 @@
 from typing import Annotated
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from app.models.user import Token
 from app.core.security import verify_password, create_access_token
@@ -26,9 +26,17 @@ async def login(form_data: Annotated[OAuth2PasswordRequestForm, Depends()]):
     if not is_valid:
         raise HTTPException(status_code=400, detail="Incorrect username or password")
         
+    # Fail closed: require explicit valid ADMIN role
+    user_role = user.get("role")
+    if user_role != "ADMIN":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: valid ADMIN role required"
+        )
+
     access_token_expires = timedelta(minutes=30)
     access_token = create_access_token(
-        data={"sub": user["username"], "role": user.get("role", "ADMIN")},
+        data={"sub": user["username"], "role": "ADMIN"},
         expires_delta=access_token_expires
     )
     return Token(access_token=access_token, token_type="bearer")

@@ -28,6 +28,7 @@ logger = logging.getLogger("cv_pipeline")
 
 from pathlib import Path
 from spool import EventSpool
+from heartbeat import EdgeHealthTracker, HeartbeatSender
 
 # Global flag for graceful shutdown
 running = True
@@ -193,8 +194,22 @@ def main():
     worker_thread = threading.Thread(target=event_worker, daemon=True)
     worker_thread.start()
     
+    # Initialize edge health tracking and background heartbeat sender
+    health_tracker = EdgeHealthTracker()
+    heartbeat_sender = HeartbeatSender(
+        tracker=health_tracker,
+        backend_url=settings.BACKEND_API_URL,
+        api_key=settings.EDGE_NODE_API_KEY,
+        interval=10.0,
+    )
+    heartbeat_sender.start()
+
     print("[Main] Initializing YOLOv8 Detector...")
     detector = YoloDetector(settings.YOLO_MODEL_PATH, settings.YOLO_CONFIDENCE_THRESHOLD)
+    if detector.is_available:
+        health_tracker.record_model_loaded(True)
+    else:
+        health_tracker.record_model_loaded(False, error="YOLO model unavailable or file not found")
     
     signal.signal(signal.SIGINT, signal_handler)
     
@@ -204,6 +219,7 @@ def main():
         counter = LineCounter(settings.LINE_START_X, settings.LINE_START_Y, settings.LINE_END_X, settings.LINE_END_Y, target_class=target_class)
     except ValueError as e:
         print(f"[Main] Fatal Error: {e}")
+        heartbeat_sender.stop()
         return
         
     print("[Main] Initializing QR Detector...")
@@ -212,6 +228,7 @@ def main():
     print("[Main] Initializing Camera Manager...")
     cam_manager = CameraManager()
     cam_manager.start()
+    health_tracker.record_camera_opened(True)
     
     print("[Main] Initializing QR Smoother...")
     qr_smoother = QRSmoother(history_size=15, confirmation_thresh=3, drop_thresh=10)
@@ -223,6 +240,7 @@ def main():
             frame = cam_manager.get_latest_frame()
             
             if frame is None:
+                health_tracker.record_frame_read(False, error="Camera frame unavailable")
                 print("[Main] Camera frame unavailable")
                 # Must still pump events and check for quit even when disconnected
                 if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -230,9 +248,19 @@ def main():
                     running = False
                     break
                 continue
-                
+
+            health_tracker.record_frame_read(True)
+
             # Run YOLO tracking inference
-            annotated_frame, inference_fps, active_tracks = detector.predict(frame)
+            try:
+                annotated_frame, inference_fps, active_tracks = detector.predict(frame)
+                if detector.is_available:
+                    health_tracker.record_inference(True, fps=inference_fps)
+                else:
+                    health_tracker.record_inference(False, error="YOLO model unavailable")
+            except Exception as infer_err:
+                annotated_frame, inference_fps, active_tracks = frame, 0.0, []
+                health_tracker.record_inference(False, error=str(infer_err))
             
             # Process counting
             crossings = counter.process_tracks(active_tracks)
@@ -362,6 +390,9 @@ def main():
     except Exception as e:
         print(f"[Main] Unhandled exception in main loop: {e}")
     finally:
+        health_tracker.record_shutdown("CV pipeline shut down")
+        print("[Main] Stopping Heartbeat Sender...")
+        heartbeat_sender.stop()
         print("[Main] Stopping Camera Manager...")
         cam_manager.stop()
         try:
