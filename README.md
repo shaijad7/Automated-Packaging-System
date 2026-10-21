@@ -1005,7 +1005,7 @@ GitHub: https://github.com/shaijad7/Automated-Packaging-System
 
 ## Author
 
-**Shaijad Shaik**
+**Shaijad Shaikh**
 
 Final-Year Project
 
